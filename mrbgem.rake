@@ -43,7 +43,7 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
         'LD' => spec.build.linker.command,
         'AR' => spec.build.archiver.command }
       _pp 'Building', "leveldb-#{version}"
-      Open3.popen2e(e, "make #{leveldb_lib}") do |stdin, stdout, thread|
+      Open3.popen2e(e, "make libleveldb.a") do |stdin, stdout, thread|
         print stdout.read
         fail "leveldb-#{version} build failed" if thread.value != 0
       end
