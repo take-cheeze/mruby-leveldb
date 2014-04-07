@@ -1,11 +1,11 @@
 MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
   spec.author = 'Takeshi Watanabe'
   spec.license = 'BSD3'
+  spec.version = version = '1.15.0'
 
   require 'open-uri'
   require 'open3'
 
-  version = '1.15.0'
   leveldb_dir = "#{build_dir}/leveldb-#{version}"
   leveldb_lib = libfile "#{leveldb_dir}/libleveldb"
   header = "#{leveldb_dir}/include/leveldb/db.h"
