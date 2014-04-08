@@ -296,7 +296,7 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
 
   mrb_define_class_under(M, db, "Error", M->eException_class);
 
-  RClass *batch = mrb_define_class(M, "WriteBatch", M->object_class);
+  RClass *batch = mrb_define_class_under(M, db, "WriteBatch", M->object_class);
   MRB_SET_INSTANCE_TT(batch, MRB_TT_DATA);
   mrb_define_method(M, batch, "initialize", batch_init, MRB_ARGS_NONE());
   mrb_define_method(M, batch, "put", batch_put, MRB_ARGS_REQ(2));

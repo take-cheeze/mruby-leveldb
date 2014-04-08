@@ -55,6 +55,7 @@ assert 'LevelDB#write' do
 end
 
 assert 'LevelDB::WriteBatch' do
+  assert_raise(NameError) { WriteBatch.new }
   LevelDB::WriteBatch.new
 end
 
