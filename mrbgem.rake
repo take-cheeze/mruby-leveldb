@@ -3,8 +3,6 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
   spec.license = 'BSD3'
   spec.version = version = '1.15.0'
 
-  fail 'C++ ABI not enabled' unless build.cxx_abi_enabled?
-
   require 'open-uri'
   require 'open3'
 
