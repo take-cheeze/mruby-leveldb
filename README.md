@@ -12,7 +12,8 @@ See [test file](./test/leveldb.rb).
 License
 =======
 
-Copyright (c) <2014>, <Takeshi Watanabe>
+Copyright (c) 2014, Takeshi Watanabe
+
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
