@@ -1,45 +1,39 @@
+TEST_DB_NAME = 'leveldb'
+
+def assert_leveldb name, opts = {}, &b
+  assert name do
+    db = LevelDB.open TEST_DB_NAME, opts
+    b.call db
+    db.close
+  end
+end
+
 assert 'LevelDB.open/close' do
-  db = LevelDB.open 'test-db', :create_if_missing => true
+  db = LevelDB.open TEST_DB_NAME, :create_if_missing => true
   db.close
 
   assert_raise(LevelDB::Error) { db.get 'key' }
 end
 
-assert 'LevelDB#put/get' do
-  db = LevelDB.open 'test-db'
-
+assert_leveldb 'LevelDB#put/get' do |db|
   assert_equal 'test', db.put('key', 'test', :sync => true)
   assert_equal 'test', db.get('key')
-
-  db.close
-
-  true
 end
 
-assert 'LevelDB#[]' do
-  db = LevelDB.open 'test-db'
-
+assert_leveldb 'LevelDB#[]' do |db|
   db.put 'key', 'test', :sync => true
   assert_equal 'test', db['key']
-
-  db.close
 end
 
-assert 'LevelDB#delete' do
-  db = LevelDB.open 'test-db'
-
+assert_leveldb 'LevelDB#delete' do |db|
   db.put 'key', 'test', :sync => true
   assert_equal 'test', db['key']
 
   db.delete 'key', :sync => true
   assert_nil db['key']
-
-  db.close
 end
 
-assert 'LevelDB#write' do
-  db = LevelDB.open 'test-db'
-
+assert_leveldb 'LevelDB#write' do |db|
   db.put 'key', 'test'
   db.put 'mruby', 'test'
 
@@ -50,8 +44,6 @@ assert 'LevelDB#write' do
 
   assert_nil db['key']
   assert_nil db['mruby']
-
-  db.close
 end
 
 assert 'LevelDB::WriteBatch' do
@@ -101,6 +93,6 @@ end
 
 assert 'LevelDB::Logger' do
   logger = LevelDB::Logger.new 'leveldb.log'
-  db = LevelDB.open 'test-db', :info_log => logger
+  db = LevelDB.open TEST_DB_NAME, :info_log => logger
   db.close
 end
