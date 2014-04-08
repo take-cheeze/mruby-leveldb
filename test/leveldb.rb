@@ -30,7 +30,7 @@ assert_leveldb 'LevelDB#delete' do |db|
   assert_equal 'test', db['key']
 
   db.delete 'key', :sync => true
-  assert_nil db['key']
+  assert_nil db['key'] # when getting key that doesn't exist, mruby-leveldb returns nil
 end
 
 assert_leveldb 'LevelDB#write' do |db|
