@@ -30,7 +30,7 @@ T& get_ref(mrb_state *M, mrb_value const& v, mrb_data_type const& t) {
   if (not DATA_PTR(v)) {
     mrb_raise(M, get_error(M), "already destroyed data");
   }
-  return *((T*)mrb_data_get_ptr(M, v, &t));
+  return *reinterpret_cast<T*>(mrb_data_get_ptr(M, v, &t));
 }
 
 void logger_free(mrb_state *M, void *p) {
@@ -124,7 +124,7 @@ void parse_opt(mrb_state *M, mrb_value const& /* obj */, WriteOptions& opt, mrb_
 }
 
 void db_free(mrb_state*, void *p) {
-  delete ((DB*)p);
+  delete reinterpret_cast<DB*>(p);
 }
 mrb_data_type const leveldb_type = { "LevelDB", db_free };
 
@@ -198,7 +198,7 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
 }
 
 void batch_free(mrb_state *M, void *p) {
-  ((WriteBatch*)p)->~WriteBatch();
+  reinterpret_cast<WriteBatch*>(p)->~WriteBatch();
   mrb_free(M, p);
 }
 mrb_data_type const write_batch_type = { "write_batch", batch_free };
