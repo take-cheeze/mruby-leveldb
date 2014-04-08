@@ -36,3 +36,64 @@ assert 'LevelDB#delete' do
 
   db.close
 end
+
+assert 'LevelDB#write' do
+  db = LevelDB.open 'test-db'
+
+  db.put 'key', 'test'
+  db.put 'mruby', 'test'
+
+  assert_equal 'test', db['key']
+  assert_equal 'test', db['mruby']
+
+  db.write LevelDB::WriteBatch.new.delete('key').delete('mruby')
+
+  assert_nil db['key']
+  assert_nil db['mruby']
+
+  db.close
+end
+
+assert 'LevelDB::WriteBatch' do
+  LevelDB::WriteBatch.new
+end
+
+assert 'LevelDB::WriteBatch#iterate' do
+  b = LevelDB::WriteBatch.new
+  b.put 'test', 'value'
+  b.delete 'test'
+  b.iterate do |t, k, v|
+    case t
+    when :put
+      assert_equal 'test', k
+      assert_equal 'value', v
+    when :delete
+      assert_equal 'test', k
+      assert_nil v
+    else
+      assert_true false # should not reach
+    end
+  end
+  assert_equal [[:put, 'test', 'value'], [:delete, 'test']], b.iterate
+end
+
+assert 'LevelDB::WriteBatch#put / []=' do
+  b = LevelDB::WriteBatch.new
+  b.put 'test', 'value'
+  b['mruby'] = 'cute'
+  assert_equal [[:put, 'test', 'value'], [:put, 'mruby', 'cute']], b.iterate
+end
+
+assert 'LevelDB::WriteBatch#delete' do
+  b = LevelDB::WriteBatch.new
+  b.delete 'test'
+  assert_equal [[:delete, 'test']], b.iterate
+end
+
+assert 'LevelDB::WriteBatch#clear' do
+  b = LevelDB::WriteBatch.new
+  b.delete 'test'
+  assert_equal [[:delete, 'test']], b.iterate
+  b.clear
+  assert_equal [], b.iterate
+end

@@ -1,9 +1,11 @@
 #include <mruby.h>
+#include <mruby/array.h>
 #include <mruby/class.h>
 #include <mruby/data.h>
 #include <mruby/hash.h>
 
 #include <leveldb/db.h>
+#include <leveldb/write_batch.h>
 
 
 namespace {
@@ -179,6 +181,104 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
   return self;
 }
 
+void batch_free(mrb_state *M, void *p) {
+  ((WriteBatch*)p)->~WriteBatch();
+  mrb_free(M, p);
+}
+mrb_data_type const write_batch_type = { "write_batch", batch_free };
+
+mrb_value db_write(mrb_state *M, mrb_value self) {
+  mrb_value batch, opt_val = mrb_nil_value();
+  WriteOptions opt;
+
+  mrb_get_args(M, "o|H", &batch, &opt_val);
+
+  parse_opt(M, opt, opt_val);
+  check_error(M, get_ref<DB>(M, self, leveldb_type).Write(
+      opt, &get_ref<WriteBatch>(M, batch, write_batch_type)));
+  return self;
+}
+
+mrb_value batch_init(mrb_state *M, mrb_value self) {
+  DATA_PTR(self) = new(mrb_malloc(M, sizeof(WriteBatch))) WriteBatch();
+  DATA_TYPE(self) = &write_batch_type;
+  return self;
+}
+
+mrb_value batch_put(mrb_state *M, mrb_value self) {
+  char *key, *val; int key_len, val_len;
+  mrb_get_args(M, "ss", &key, &key_len, &val, &val_len);
+  return get_ref<WriteBatch>(M, self, write_batch_type)
+      .Put(Slice(key, key_len), Slice(val, val_len)), self;
+}
+
+mrb_value batch_delete(mrb_state *M, mrb_value self) {
+  char *key; int key_len;
+  mrb_get_args(M, "s", &key, &key_len);
+  return get_ref<WriteBatch>(M, self, write_batch_type).Delete(Slice(key, key_len)), self;
+}
+
+mrb_value batch_clear(mrb_state *M, mrb_value self) {
+  return get_ref<WriteBatch>(M, self, write_batch_type).Clear(), self;
+}
+
+struct ArrayBatchHandler : public WriteBatch::Handler {
+  mrb_state* const M;
+  mrb_value const result;
+
+  ArrayBatchHandler(mrb_state *M) : M(M), result(mrb_ary_new(M)) {}
+
+  void Put(Slice const& k, Slice const& v) override {
+    mrb_value const ary[] = {
+      symbol_value_lit(M, "put"),
+      mrb_str_new(M, k.data(), k.size()),
+      mrb_str_new(M, v.data(), v.size()) };
+    mrb_ary_push(M, result, mrb_ary_new_from_values(M, 3, ary));
+  }
+
+  void Delete(Slice const& k) override {
+    mrb_value const ary[] = {
+      symbol_value_lit(M, "delete"),
+      mrb_str_new(M, k.data(), k.size()) };
+    mrb_ary_push(M, result, mrb_ary_new_from_values(M, 2, ary));
+  }
+};
+
+struct BlockBatchHandler : public WriteBatch::Handler {
+  mrb_state* const M;
+  mrb_value const block;
+
+  BlockBatchHandler(mrb_state *M, mrb_value const& b) : M(M), block(b) {}
+
+  void Put(Slice const& k, Slice const& v) override {
+    mrb_value const ary[] = {
+      symbol_value_lit(M, "put"),
+      mrb_str_new(M, k.data(), k.size()),
+      mrb_str_new(M, v.data(), v.size()) };
+    mrb_yield(M, block, mrb_ary_new_from_values(M, 3, ary));
+  }
+
+  void Delete(Slice const& k) override {
+    mrb_value const ary[] = {
+      symbol_value_lit(M, "delete"),
+      mrb_str_new(M, k.data(), k.size()) };
+    mrb_yield(M, block, mrb_ary_new_from_values(M, 2, ary));
+  }
+};
+
+mrb_value batch_iterate(mrb_state *M, mrb_value self) {
+  mrb_value b;
+  mrb_get_args(M, "&", &b);
+
+  if (mrb_nil_p(b)) { // return array
+    ArrayBatchHandler h(M);
+    return get_ref<WriteBatch>(M, self, write_batch_type).Iterate(&h), h.result;
+  } else {
+    BlockBatchHandler h(M, b);
+    return get_ref<WriteBatch>(M, self, write_batch_type).Iterate(&h), self;
+  }
+}
+
 }
 
 extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
@@ -192,8 +292,18 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   mrb_define_method(M, db, "get", db_get, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_alias(M, db, "[]", "get");
   mrb_define_method(M, db, "close", db_close, MRB_ARGS_NONE());
+  mrb_define_method(M, db, "write", db_write, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
 
   mrb_define_class_under(M, db, "Error", M->eException_class);
+
+  RClass *batch = mrb_define_class(M, "WriteBatch", M->object_class);
+  MRB_SET_INSTANCE_TT(batch, MRB_TT_DATA);
+  mrb_define_method(M, batch, "initialize", batch_init, MRB_ARGS_NONE());
+  mrb_define_method(M, batch, "put", batch_put, MRB_ARGS_REQ(2));
+  mrb_define_method(M, batch, "[]=", batch_put, MRB_ARGS_REQ(2));
+  mrb_define_method(M, batch, "delete", batch_delete, MRB_ARGS_REQ(1));
+  mrb_define_method(M, batch, "clear", batch_clear, MRB_ARGS_NONE());
+  mrb_define_method(M, batch, "iterate", batch_iterate, MRB_ARGS_BLOCK());
 }
 
 extern "C" void mrb_mruby_leveldb_gem_final(mrb_state*) {}
