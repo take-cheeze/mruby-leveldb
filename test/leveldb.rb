@@ -98,3 +98,9 @@ assert 'LevelDB::WriteBatch#clear' do
   b.clear
   assert_equal [], b.iterate
 end
+
+assert 'LevelDB::Logger' do
+  logger = LevelDB::Logger.new 'leveldb.log'
+  db = LevelDB.open 'test-db', :info_log => logger
+  db.close
+end

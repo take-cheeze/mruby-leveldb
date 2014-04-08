@@ -3,9 +3,11 @@
 #include <mruby/class.h>
 #include <mruby/data.h>
 #include <mruby/hash.h>
+#include <mruby/variable.h>
 
 #include <leveldb/db.h>
 #include <leveldb/write_batch.h>
+#include <leveldb/env.h>
 
 
 namespace {
@@ -31,9 +33,15 @@ T& get_ref(mrb_state *M, mrb_value const& v, mrb_data_type const& t) {
   return *((T*)mrb_data_get_ptr(M, v, &t));
 }
 
+void logger_free(mrb_state *M, void *p) {
+  static_cast<Logger*>(p)->~Logger();
+  mrb_free(M, p);
+}
+mrb_data_type const logger_type = { "logger", logger_free };
+
 #define symbol_value_lit(M, lit) mrb_symbol_value(mrb_intern_lit(M, lit))
 
-void parse_opt(mrb_state *M, Options& opt, mrb_value const& val) {
+void parse_opt(mrb_state *M, mrb_value const& self, Options& opt, mrb_value const& val) {
   if (mrb_nil_p(val)) { return; }
 
   opt.create_if_missing = mrb_bool(mrb_hash_get(M, val, symbol_value_lit(M, "create_if_missing")));
@@ -77,14 +85,21 @@ void parse_opt(mrb_state *M, Options& opt, mrb_value const& val) {
     }
   }
 
+  mrb_value const info_log = mrb_hash_get(M, val, symbol_value_lit(M, "info_log"));
+  if (not mrb_nil_p(info_log)) {
+    opt.info_log = &get_ref<Logger>(M, info_log, logger_type);
+
+    // protect logger from GC
+    mrb_iv_set(M, self, mrb_intern_lit(M, "info_log"), info_log);
+  }
+
   // comparator
   // env
-  // logger
   // block_cache
   // filter_policy
 }
 
-void parse_opt(mrb_state *M, ReadOptions& opt, mrb_value const& val) {
+void parse_opt(mrb_state *M, mrb_value const& /* obj */, ReadOptions& opt, mrb_value const& val) {
   if (mrb_nil_p(val)) { return; }
 
   opt.verify_checksums = mrb_bool(mrb_hash_get(M, val, symbol_value_lit(M, "verify_checksums")));
@@ -102,7 +117,7 @@ void parse_opt(mrb_state *M, ReadOptions& opt, mrb_value const& val) {
   */
 }
 
-void parse_opt(mrb_state *M, WriteOptions& opt, mrb_value const& val) {
+void parse_opt(mrb_state *M, mrb_value const& /* obj */, WriteOptions& opt, mrb_value const& val) {
   if (mrb_nil_p(val)) { return; }
 
   opt.sync = mrb_bool(mrb_hash_get(M, val, symbol_value_lit(M, "sync")));
@@ -121,7 +136,7 @@ mrb_value db_init(mrb_state *M, mrb_value self) {
 
   mrb_get_args(M, "s|H", &str, &str_len, &opt_val);
 
-  parse_opt(M, opt, opt_val);
+  parse_opt(M, self, opt, opt_val);
   check_error(M, DB::Open(opt, std::string(str, str_len), &db));
 
   mrb_assert(db);
@@ -135,6 +150,7 @@ mrb_value db_init(mrb_state *M, mrb_value self) {
 mrb_value db_close(mrb_state *M, mrb_value self) {
   delete &get_ref<DB>(M, self, leveldb_type);
   DATA_PTR(self) = NULL;
+  mrb_iv_remove(M, self, mrb_intern_lit(M, "info_log"));
   return self;
 }
 
@@ -146,7 +162,7 @@ mrb_value db_put(mrb_state *M, mrb_value self)
 
   mrb_get_args(M, "ss|H", &key, &key_len, &val, &val_len, &opt_val);
 
-  parse_opt(M, opt, opt_val);
+  parse_opt(M, self, opt, opt_val);
   check_error(M, get_ref<DB>(M, self, leveldb_type).Put(opt, Slice(key, key_len), Slice(val, val_len)));
   return mrb_str_new(M, val, val_len);
 }
@@ -158,7 +174,7 @@ mrb_value db_get(mrb_state *M, mrb_value self) {
 
   mrb_get_args(M, "s|H", &key, &key_len, &opt_val);
 
-  parse_opt(M, opt, opt_val);
+  parse_opt(M, self, opt, opt_val);
   std::string val;
   Status const s = get_ref<DB>(M, self, leveldb_type).Get(opt, Slice(key, key_len), &val);
   if (s.IsNotFound()) {
@@ -176,7 +192,7 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
 
   mrb_get_args(M, "s|H", &key, &key_len, &opt_val);
 
-  parse_opt(M, opt, opt_val);
+  parse_opt(M, self, opt, opt_val);
   check_error(M, get_ref<DB>(M, self, leveldb_type).Delete(opt, Slice(key, key_len)));
   return self;
 }
@@ -193,7 +209,7 @@ mrb_value db_write(mrb_state *M, mrb_value self) {
 
   mrb_get_args(M, "o|H", &batch, &opt_val);
 
-  parse_opt(M, opt, opt_val);
+  parse_opt(M, self, opt, opt_val);
   check_error(M, get_ref<DB>(M, self, leveldb_type).Write(
       opt, &get_ref<WriteBatch>(M, batch, write_batch_type)));
   return self;
@@ -279,6 +295,32 @@ mrb_value batch_iterate(mrb_state *M, mrb_value self) {
   }
 }
 
+mrb_value logger_init(mrb_state *M, mrb_value self) {
+  char *fname; int fname_len;
+  mrb_get_args(M, "s", &fname, &fname_len);
+
+  Logger *logger;
+  check_error(M, Env::Default()->NewLogger(std::string(fname, fname_len), &logger));
+  mrb_assert(logger);
+
+  DATA_PTR(self) = logger;
+  DATA_TYPE(self) = &logger_type;
+  return self;
+}
+
+void log(mrb_state *M, mrb_value const& self, char const* str, ...) {
+  va_list vl;
+  va_start(vl, str);
+  get_ref<Logger>(M, self, logger_type).Logv(str, vl);
+  va_end(vl);
+}
+
+mrb_value logger_log(mrb_state *M, mrb_value self) {
+  char *str;;
+  mrb_get_args(M, "z", &str);
+  return log(M, self, str), self;
+}
+
 }
 
 extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
@@ -304,6 +346,11 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   mrb_define_method(M, batch, "delete", batch_delete, MRB_ARGS_REQ(1));
   mrb_define_method(M, batch, "clear", batch_clear, MRB_ARGS_NONE());
   mrb_define_method(M, batch, "iterate", batch_iterate, MRB_ARGS_BLOCK());
+
+  RClass *logger = mrb_define_class_under(M, db, "Logger", M->object_class);
+  MRB_SET_INSTANCE_TT(logger, MRB_TT_DATA);
+  mrb_define_method(M, logger, "initialize", logger_init, MRB_ARGS_REQ(1));
+  mrb_define_method(M, logger, "log", logger_log, MRB_ARGS_REQ(1));
 }
 
 extern "C" void mrb_mruby_leveldb_gem_final(mrb_state*) {}
