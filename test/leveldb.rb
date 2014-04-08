@@ -94,5 +94,6 @@ end
 assert 'LevelDB::Logger' do
   logger = LevelDB::Logger.new 'leveldb.log'
   db = LevelDB.open TEST_DB_NAME, :info_log => logger
+  logger.log 'test'
   db.close
 end
