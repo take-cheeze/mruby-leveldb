@@ -3,11 +3,14 @@
 #include <mruby/class.h>
 #include <mruby/data.h>
 #include <mruby/hash.h>
+#include <mruby/string.h>
 #include <mruby/variable.h>
 
 #include <leveldb/db.h>
 #include <leveldb/write_batch.h>
 #include <leveldb/env.h>
+
+#include <vector>
 
 
 namespace {
@@ -199,6 +202,63 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
   return self;
 }
 
+mrb_value db_property(mrb_state *M, mrb_value self) {
+  char *key; int key_len;
+  mrb_get_args(M, "s", &key, &key_len);
+
+  std::string str;
+  return get_ref<DB>(M, self, leveldb_type).GetProperty(Slice(key, key_len), &str)
+      ? mrb_str_new(M, str.data(), str.size()) : mrb_nil_value();
+}
+
+mrb_value db_approximate_sizes(mrb_state *M, mrb_value self) {
+  mrb_value *ranges_val; mrb_int n;
+  mrb_value result = mrb_nil_value();
+  mrb_get_args(M, "a|A", &ranges_val, &n, &result);
+
+  if (mrb_nil_p(result)) {
+    result = mrb_ary_new_capa(M, n);
+  } else {
+    mrb_ary_clear(M, result);
+  }
+
+  std::vector<Range> ranges(n);
+  for (mrb_int i = 0; i < n; ++i) {
+    mrb_value
+        start = mrb_str_to_str(M, mrb_ary_entry(ranges_val[i], 0)),
+        limit = mrb_str_to_str(M, mrb_ary_entry(ranges_val[i], 1));
+    ranges[i] = Range(Slice(RSTRING_PTR(start), RSTRING_LEN(start)),
+                      Slice(RSTRING_PTR(limit), RSTRING_LEN(limit)));
+  }
+  std::vector<uint64_t> sizes(n);
+  get_ref<DB>(M, self, leveldb_type).GetApproximateSizes(ranges.data(), n, sizes.data());
+
+  for (mrb_int i = 0; i < n; ++i) {
+    mrb_ary_push(M, result, sizes[i] > MRB_INT_MAX? mrb_float_value(M, sizes[i]) : mrb_fixnum_value(sizes[i]));
+  }
+  return result;
+}
+
+mrb_value db_compact_range(mrb_state *M, mrb_value self) {
+  char *begin, *end; int begin_len, end_len;
+  int const argc = mrb_get_args(M, "|ss", &begin, &begin_len, &end, &end_len);
+  switch(argc) {
+    case 2: {
+      Slice const b(begin, begin_len), e(end, end_len);
+      get_ref<DB>(M, self, leveldb_type).CompactRange(&b, &e);
+    } break;
+
+    case 0: {
+      get_ref<DB>(M, self, leveldb_type).CompactRange(nullptr, nullptr);
+    } break;
+
+    default:
+      mrb_raisef(M, mrb_class_get(M, "ArgumentError"), "Wrong number of arguments: %S", mrb_fixnum_value(argc));
+      break;
+  }
+  return self;
+}
+
 mrb_value db_destroy(mrb_state *M, mrb_value self) {
   mrb_value opt_val = mrb_nil_value();
   Options opt;
@@ -359,6 +419,9 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   mrb_define_alias(M, db, "[]", "get");
   mrb_define_method(M, db, "close", db_close, MRB_ARGS_NONE());
   mrb_define_method(M, db, "write", db_write, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(M, db, "property", db_property, MRB_ARGS_REQ(1));
+  mrb_define_method(M, db, "approximate_sizes", db_approximate_sizes, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(M, db, "compact_range", db_compact_range, MRB_ARGS_REQ(2));
 
   mrb_define_class_method(M, db, "destroy", db_destroy, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_class_method(M, db, "repair", db_repair, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));

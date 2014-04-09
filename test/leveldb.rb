@@ -46,6 +46,32 @@ assert_leveldb 'LevelDB#write' do |db|
   assert_nil db['mruby']
 end
 
+assert_leveldb 'LevelDB#property' do |db|
+  assert_true db.property('leveldb.stats').kind_of? String
+  assert_nil db.property 'invalid propertyyyyyy' # not found property
+end
+
+assert_leveldb 'LevelDB#approximate_sizes' do |db|
+  db.put 'test', 'tt'
+  db.put 'test1', 'ttt'
+  db.put 'test2', 'tttt'
+  db.put 'test3', 'ttttt'
+
+  result = ['test']
+  ret = db.approximate_sizes [['test', 'test1'], ['test', 'test2']], result
+  assert_equal ret, result # when array passed it'll be cleared and used as result
+
+  assert_equal [], db.approximate_sizes([])
+end
+
+assert_leveldb 'LevelDB#compact_range' do |db|
+  assert_raise(ArgumentError) { db.compact_range '' }
+  db.put 'test', 'tt'
+  db.put 'test1', 'ttt'
+  db.compact_range # compact all
+  db.compact_range 'test', 'test1'
+end
+
 assert 'LevelDB::WriteBatch' do
   assert_raise(NameError) { WriteBatch.new }
   LevelDB::WriteBatch.new
