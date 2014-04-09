@@ -90,7 +90,9 @@ void parse_opt(mrb_state *M, mrb_value const& self, Options& opt, mrb_value cons
     opt.info_log = &get_ref<Logger>(M, info_log, logger_type);
 
     // protect logger from GC
-    mrb_iv_set(M, self, mrb_intern_lit(M, "info_log"), info_log);
+    if (not mrb_nil_p(self)) {
+      mrb_iv_set(M, self, mrb_intern_lit(M, "info_log"), info_log);
+    }
   }
 
   // comparator
@@ -194,6 +196,28 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
 
   parse_opt(M, self, opt, opt_val);
   check_error(M, get_ref<DB>(M, self, leveldb_type).Delete(opt, Slice(key, key_len)));
+  return self;
+}
+
+mrb_value db_destroy(mrb_state *M, mrb_value self) {
+  mrb_value opt_val = mrb_nil_value();
+  Options opt;
+  char *fname; int fname_len;
+
+  mrb_get_args(M, "s|H", &fname, &fname_len, &opt_val);
+  parse_opt(M, mrb_nil_value(), opt, opt_val);
+  check_error(M, DestroyDB(std::string(fname, fname_len), opt));
+  return self;
+}
+
+mrb_value db_repair(mrb_state *M, mrb_value self) {
+  mrb_value opt_val = mrb_nil_value();
+  Options opt;
+  char *fname; int fname_len;
+
+  mrb_get_args(M, "s|H", &fname, &fname_len, &opt_val);
+  parse_opt(M, mrb_nil_value(), opt, opt_val);
+  check_error(M, RepairDB(std::string(fname, fname_len), opt));
   return self;
 }
 
@@ -335,6 +359,9 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   mrb_define_alias(M, db, "[]", "get");
   mrb_define_method(M, db, "close", db_close, MRB_ARGS_NONE());
   mrb_define_method(M, db, "write", db_write, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+
+  mrb_define_class_method(M, db, "destroy", db_destroy, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_class_method(M, db, "repair", db_repair, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
 
   mrb_define_class_under(M, db, "Error", M->eException_class);
 

@@ -97,3 +97,11 @@ assert 'LevelDB::Logger' do
   logger.log 'test'
   db.close
 end
+
+assert 'LevelDB.destroy' do
+  LevelDB.destroy TEST_DB_NAME
+end
+
+assert 'LevelDB.repair' do
+  LevelDB.repair TEST_DB_NAME
+end
