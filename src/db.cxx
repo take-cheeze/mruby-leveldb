@@ -154,7 +154,7 @@ mrb_value db_init(mrb_state *M, mrb_value self) {
 
 mrb_value db_close(mrb_state *M, mrb_value self) {
   delete &get_ref<DB>(M, self, leveldb_type);
-  DATA_PTR(self) = NULL;
+  DATA_PTR(self) = nullptr;
   mrb_iv_remove(M, self, mrb_intern_lit(M, "info_log"));
   return self;
 }
