@@ -10,12 +10,15 @@
 #include <leveldb/write_batch.h>
 #include <leveldb/env.h>
 
+#include <functional>
+#include <memory>
 #include <vector>
 
 
 namespace {
 
 using namespace leveldb;
+using std::placeholders::_1;
 
 RClass *get_error(mrb_state *M) {
   return mrb_class_get_under(M, mrb_class_get(M, "LevelDB"), "Error");
@@ -41,6 +44,15 @@ void logger_free(mrb_state *M, void *p) {
   mrb_free(M, p);
 }
 mrb_data_type const logger_type = { "logger", logger_free };
+
+typedef std::unique_ptr<Snapshot const, std::function<void(Snapshot const*)>> SnapshotRef;
+void snapshot_free(mrb_state *M, void *p) {
+  if (p) {
+    reinterpret_cast<SnapshotRef*>(p)->~SnapshotRef();
+    mrb_free(M, p);
+  }
+}
+mrb_data_type const snapshot_type = {  "snapshot", snapshot_free };
 
 #define symbol_value_lit(M, lit) mrb_symbol_value(mrb_intern_lit(M, lit))
 
@@ -114,12 +126,10 @@ void parse_opt(mrb_state *M, mrb_value const& /* obj */, ReadOptions& opt, mrb_v
     opt.fill_cache = mrb_bool(fill_cache);
   }
 
-  /* TODO
   mrb_value const snapshot = mrb_hash_get(M, val, symbol_value_lit(M, "snapshot"));
   if (not mrb_nil_p(snapshot)) {
-    opt.snapshot = get_ref<Snapshot>(M, snapshot, snapshot_type);
+    opt.snapshot = get_ref<SnapshotRef>(M, snapshot, snapshot_type).get();
   }
-  */
 }
 
 void parse_opt(mrb_state *M, mrb_value const& /* obj */, WriteOptions& opt, mrb_value const& val) {
@@ -128,32 +138,92 @@ void parse_opt(mrb_state *M, mrb_value const& /* obj */, WriteOptions& opt, mrb_
   opt.sync = mrb_bool(mrb_hash_get(M, val, symbol_value_lit(M, "sync")));
 }
 
-void db_free(mrb_state*, void *p) {
-  delete reinterpret_cast<DB*>(p);
+struct DBRef {
+  std::unique_ptr<DB> const cxx;
+  mrb_state * const M;
+  mrb_value const mruby;
+
+  DBRef(mrb_state *M, DB *ptr, mrb_value v) : cxx(ptr), M(M), mruby(v) {}
+
+  ~DBRef() {
+    mrb_assert(DATA_PTR(mruby));
+    if (not mrb_iv_defined(M, mruby, mrb_intern_lit(M, "handles"))) { return; }
+
+    mrb_value const handles = mrb_iv_get(M, mruby, mrb_intern_lit(M, "handles"));
+    mrb_assert(mrb_array_p(handles));
+
+    for (mrb_int i = 0; i < RARRAY_LEN(handles); ++i) {
+      mrb_value const h = RARRAY_PTR(handles)[i];
+      mrb_assert(mrb_type(h) == MRB_TT_DATA);
+      if (not DATA_PTR(h)) { continue; }
+
+      if (DATA_TYPE(h) == &snapshot_type) {
+        reinterpret_cast<SnapshotRef*>(DATA_PTR(h))->~SnapshotRef();
+      }
+      else { mrb_assert(false); }
+      mrb_free(M, DATA_PTR(h));
+      DATA_PTR(h) = nullptr;
+    }
+
+    mrb_ary_clear(M, handles);
+  }
+
+  void clear_free_handles() {
+    if (not mrb_iv_defined(M, mruby, mrb_intern_lit(M, "handles"))) { return; }
+
+    mrb_value const handles = mrb_iv_get(M, mruby, mrb_intern_lit(M, "handles"));
+    mrb_int new_idx = 0;
+    for (mrb_int i = 0; i < RARRAY_LEN(handles); ++i) {
+      if (DATA_PTR(RARRAY_PTR(handles)[i])) {
+        RARRAY_PTR(handles)[new_idx++] = RARRAY_PTR(handles)[i];
+      }
+    }
+    RARRAY_LEN(handles) = new_idx;
+  }
+
+  void add_handle(mrb_value const& v) {
+    mrb_value handles = mrb_iv_get(M, mruby, mrb_intern_lit(M, "handles"));
+    if (mrb_nil_p(handles)) {
+      handles = mrb_ary_new_capa(M, 1);
+      mrb_iv_set(M, mruby, mrb_intern_lit(M, "handles"), handles);
+    }
+    mrb_assert(mrb_array_p(handles));
+    mrb_ary_push(M, handles, v);
+  }
+};
+
+void db_free(mrb_state *mrb, void *p) {
+  if (p) {
+    DBRef *const ref = reinterpret_cast<DBRef*>(p);
+    ref->~DBRef();
+    mrb_free(mrb, p);
+  }
 }
 mrb_data_type const leveldb_type = { "LevelDB", db_free };
 
 mrb_value db_init(mrb_state *M, mrb_value self) {
-  DB *db;
   mrb_value opt_val = mrb_nil_value();
-  Options opt;
   char *str; int str_len;
 
   mrb_get_args(M, "s|H", &str, &str_len, &opt_val);
 
+  Options opt;
   parse_opt(M, self, opt, opt_val);
+
+  DB *db;
   check_error(M, DB::Open(opt, std::string(str, str_len), &db));
 
   mrb_assert(db);
 
-  DATA_PTR(self) = db;
+  DATA_PTR(self) = new(mrb_malloc(M, sizeof(DBRef))) DBRef(M, db, self);
   DATA_TYPE(self) = &leveldb_type;
 
   return self;
 }
 
 mrb_value db_close(mrb_state *M, mrb_value self) {
-  delete &get_ref<DB>(M, self, leveldb_type);
+  get_ref<DBRef>(M, self, leveldb_type).~DBRef();
+  mrb_free(M, DATA_PTR(self));
   DATA_PTR(self) = nullptr;
   mrb_iv_remove(M, self, mrb_intern_lit(M, "info_log"));
   return self;
@@ -168,7 +238,7 @@ mrb_value db_put(mrb_state *M, mrb_value self)
   mrb_get_args(M, "ss|H", &key, &key_len, &val, &val_len, &opt_val);
 
   parse_opt(M, self, opt, opt_val);
-  check_error(M, get_ref<DB>(M, self, leveldb_type).Put(opt, Slice(key, key_len), Slice(val, val_len)));
+  check_error(M, get_ref<DBRef>(M, self, leveldb_type).cxx->Put(opt, Slice(key, key_len), Slice(val, val_len)));
   return mrb_str_new(M, val, val_len);
 }
 
@@ -181,7 +251,7 @@ mrb_value db_get(mrb_state *M, mrb_value self) {
 
   parse_opt(M, self, opt, opt_val);
   std::string val;
-  Status const s = get_ref<DB>(M, self, leveldb_type).Get(opt, Slice(key, key_len), &val);
+  Status const s = get_ref<DBRef>(M, self, leveldb_type).cxx->Get(opt, Slice(key, key_len), &val);
   if (s.IsNotFound()) {
     return mrb_nil_value();
   } else {
@@ -198,7 +268,7 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
   mrb_get_args(M, "s|H", &key, &key_len, &opt_val);
 
   parse_opt(M, self, opt, opt_val);
-  check_error(M, get_ref<DB>(M, self, leveldb_type).Delete(opt, Slice(key, key_len)));
+  check_error(M, get_ref<DBRef>(M, self, leveldb_type).cxx->Delete(opt, Slice(key, key_len)));
   return self;
 }
 
@@ -207,7 +277,7 @@ mrb_value db_property(mrb_state *M, mrb_value self) {
   mrb_get_args(M, "s", &key, &key_len);
 
   std::string str;
-  return get_ref<DB>(M, self, leveldb_type).GetProperty(Slice(key, key_len), &str)
+  return get_ref<DBRef>(M, self, leveldb_type).cxx->GetProperty(Slice(key, key_len), &str)
       ? mrb_str_new(M, str.data(), str.size()) : mrb_nil_value();
 }
 
@@ -231,7 +301,7 @@ mrb_value db_approximate_sizes(mrb_state *M, mrb_value self) {
                       Slice(RSTRING_PTR(limit), RSTRING_LEN(limit)));
   }
   std::vector<uint64_t> sizes(n);
-  get_ref<DB>(M, self, leveldb_type).GetApproximateSizes(ranges.data(), n, sizes.data());
+  get_ref<DBRef>(M, self, leveldb_type).cxx->GetApproximateSizes(ranges.data(), n, sizes.data());
 
   for (mrb_int i = 0; i < n; ++i) {
     mrb_ary_push(M, result, sizes[i] > MRB_INT_MAX? mrb_float_value(M, sizes[i]) : mrb_fixnum_value(sizes[i]));
@@ -245,17 +315,51 @@ mrb_value db_compact_range(mrb_state *M, mrb_value self) {
   switch(argc) {
     case 2: {
       Slice const b(begin, begin_len), e(end, end_len);
-      get_ref<DB>(M, self, leveldb_type).CompactRange(&b, &e);
+      get_ref<DBRef>(M, self, leveldb_type).cxx->CompactRange(&b, &e);
     } break;
 
     case 0: {
-      get_ref<DB>(M, self, leveldb_type).CompactRange(nullptr, nullptr);
+      get_ref<DBRef>(M, self, leveldb_type).cxx->CompactRange(nullptr, nullptr);
     } break;
 
     default:
       mrb_raisef(M, mrb_class_get(M, "ArgumentError"), "Wrong number of arguments: %S", mrb_fixnum_value(argc));
       break;
   }
+  return self;
+}
+
+mrb_value db_snapshot(mrb_state *M, mrb_value self) {
+  DBRef& ref = get_ref<DBRef>(M, self, leveldb_type);
+  ref.clear_free_handles();
+  mrb_value ret =  mrb_obj_value(mrb_data_object_alloc(
+      M, mrb_class_get_under(M, mrb_class_get(M, "LevelDB"), "Snapshot"),
+      new(mrb_malloc(M, sizeof(SnapshotRef)))
+      SnapshotRef(ref.cxx->GetSnapshot(), std::bind(&DB::ReleaseSnapshot, ref.cxx.get(), _1)),
+      &snapshot_type));
+  ref.add_handle(ret);
+  return ret;
+}
+
+mrb_value snapshot_init(mrb_state *M, mrb_value self) {
+  mrb_value db;
+  mrb_get_args(M, "o", &db);
+
+  DBRef& ref = get_ref<DBRef>(M, db, leveldb_type);
+  ref.clear_free_handles();
+
+  DATA_PTR(self) = new(mrb_malloc(M, sizeof(SnapshotRef))) SnapshotRef(
+      ref.cxx->GetSnapshot(), std::bind(&DB::ReleaseSnapshot, ref.cxx.get(), _1));
+  DATA_TYPE(self) = &snapshot_type;
+  ref.add_handle(self);
+
+  return self;
+}
+
+mrb_value snapshot_release(mrb_state *M, mrb_value self) {
+  get_ref<SnapshotRef>(M, self, snapshot_type).~SnapshotRef();
+  mrb_free(M, DATA_PTR(self));
+  DATA_PTR(self) = nullptr;
   return self;
 }
 
@@ -294,7 +398,7 @@ mrb_value db_write(mrb_state *M, mrb_value self) {
   mrb_get_args(M, "o|H", &batch, &opt_val);
 
   parse_opt(M, self, opt, opt_val);
-  check_error(M, get_ref<DB>(M, self, leveldb_type).Write(
+  check_error(M, get_ref<DBRef>(M, self, leveldb_type).cxx->Write(
       opt, &get_ref<WriteBatch>(M, batch, write_batch_type)));
   return self;
 }
@@ -422,6 +526,7 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   mrb_define_method(M, db, "property", db_property, MRB_ARGS_REQ(1));
   mrb_define_method(M, db, "approximate_sizes", db_approximate_sizes, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_method(M, db, "compact_range", db_compact_range, MRB_ARGS_REQ(2));
+  mrb_define_method(M, db, "snapshot", db_snapshot, MRB_ARGS_NONE());
 
   mrb_define_class_method(M, db, "destroy", db_destroy, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_class_method(M, db, "repair", db_repair, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
@@ -441,6 +546,11 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   MRB_SET_INSTANCE_TT(logger, MRB_TT_DATA);
   mrb_define_method(M, logger, "initialize", logger_init, MRB_ARGS_REQ(1));
   mrb_define_method(M, logger, "log", logger_log, MRB_ARGS_REQ(1));
+
+  RClass *snapshot = mrb_define_class_under(M, db, "Snapshot", M->object_class);
+  MRB_SET_INSTANCE_TT(snapshot, MRB_TT_DATA);
+  mrb_define_method(M, snapshot, "initialize", snapshot_init, MRB_ARGS_REQ(1));
+  mrb_define_method(M, snapshot, "release", snapshot_release, MRB_ARGS_REQ(1));
 }
 
 extern "C" void mrb_mruby_leveldb_gem_final(mrb_state*) {}

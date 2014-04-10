@@ -72,6 +72,25 @@ assert_leveldb 'LevelDB#compact_range' do |db|
   db.compact_range 'test', 'test1'
 end
 
+assert_leveldb 'LevelDB#snapshot' do |db|
+  db.put 'key', 'test'
+  s = db.snapshot
+  assert_true s.kind_of? LevelDB::Snapshot
+  db.put 'key', 'test_test'
+  assert_equal 'test', db.get('key', :snapshot => s)
+end
+
+assert_leveldb 'LevelDB::Snapshot' do |db|
+  db.put 'key', 'test'
+  s = LevelDB::Snapshot.new db
+  db.put 'key', 'test_test'
+  assert_equal 'test', db.get('key', :snapshot => s)
+  assert_equal 'test_test', db.get('key')
+
+  s.release
+  assert_raise(LevelDB::Error) { s.release }
+end
+
 assert 'LevelDB::WriteBatch' do
   assert_raise(NameError) { WriteBatch.new }
   LevelDB::WriteBatch.new
