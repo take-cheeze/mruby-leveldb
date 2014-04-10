@@ -54,6 +54,11 @@ void snapshot_free(mrb_state *M, void *p) {
 }
 mrb_data_type const snapshot_type = {  "snapshot", snapshot_free };
 
+void iterator_free(mrb_state*, void *p) {
+  if (p) { delete reinterpret_cast<Iterator*>(p); }
+}
+mrb_data_type const iterator_type = { "iterator", &iterator_free };
+
 #define symbol_value_lit(M, lit) mrb_symbol_value(mrb_intern_lit(M, lit))
 
 void parse_opt(mrb_state *M, mrb_value const& self, Options& opt, mrb_value const& val) {
@@ -159,9 +164,12 @@ struct DBRef {
 
       if (DATA_TYPE(h) == &snapshot_type) {
         reinterpret_cast<SnapshotRef*>(DATA_PTR(h))->~SnapshotRef();
+        mrb_free(M, DATA_PTR(h));
+      }
+      else if (DATA_TYPE(h) == &iterator_type) {
+        delete reinterpret_cast<Iterator*>(DATA_PTR(h));
       }
       else { mrb_assert(false); }
-      mrb_free(M, DATA_PTR(h));
       DATA_PTR(h) = nullptr;
     }
 
@@ -339,6 +347,117 @@ mrb_value db_snapshot(mrb_state *M, mrb_value self) {
       &snapshot_type));
   ref.add_handle(ret);
   return ret;
+}
+
+mrb_value db_iterate(mrb_state *M, mrb_value self) {
+  mrb_value opt_val = mrb_nil_value(), b;
+  mrb_get_args(M, "&|o", &b, &opt_val);
+
+  if (mrb_nil_p(b)) {
+    mrb_raise(M, mrb_class_get(M, "ArgumentError"), "Expected block in LevelDB#iterate .");
+  }
+
+  ReadOptions opt;
+  parse_opt(M, self, opt, opt_val);
+  std::unique_ptr<Iterator> const it(get_ref<DBRef>(M, self, leveldb_type).cxx->NewIterator(opt));
+  it->SeekToFirst();
+  check_error(M, it->status());
+
+  while (it->Valid()) {
+    Slice const key = it->key(), val = it->value();
+    mrb_value args[] =
+        { mrb_str_new(M, key.data(), key.size()), mrb_str_new(M, val.data(), val.size()) };
+    mrb_yield_argv(M, b, 2, args);
+
+    it->Next();
+    check_error(M, it->status());
+  }
+
+  return self;
+}
+
+mrb_value db_iterator(mrb_state *M, mrb_value self) {
+  mrb_value opt_val = mrb_nil_value();
+  mrb_get_args(M, "|o", &opt_val);
+  DBRef& ref = get_ref<DBRef>(M, self, leveldb_type);
+  ref.clear_free_handles();
+  ReadOptions opt;
+  parse_opt(M, self, opt, opt_val);
+  mrb_value ret =  mrb_obj_value(mrb_data_object_alloc(
+      M, mrb_class_get_under(M, mrb_class_get(M, "LevelDB"), "Iterator"),
+      ref.cxx->NewIterator(opt), &iterator_type));
+  ref.add_handle(ret);
+  return ret;
+}
+
+mrb_value iterator_init(mrb_state *M, mrb_value self) {
+  mrb_value db, opt_val = mrb_nil_value();
+  mrb_get_args(M, "o|o", &opt_val);
+
+  DBRef& ref = get_ref<DBRef>(M, db, iterator_type);
+  ref.clear_free_handles();
+
+  ReadOptions opt;
+  parse_opt(M, self, opt, opt_val);
+
+  DATA_PTR(self) = ref.cxx->NewIterator(opt);
+  DATA_TYPE(self) = &iterator_type;
+  ref.add_handle(self);
+  return self;
+}
+
+mrb_value iterator_delete(mrb_state *M, mrb_value self) {
+  delete &get_ref<Iterator>(M, self, iterator_type);
+  DATA_PTR(self) = NULL;
+  return self;
+}
+
+mrb_value iterator_valid_p(mrb_state *M, mrb_value self) {
+  return mrb_bool_value(get_ref<Iterator>(M, self, iterator_type).Valid());
+}
+
+mrb_value iterator_seek(mrb_state *M, mrb_value self) {
+  char *str; int str_len;
+  mrb_get_args(M, "s", &str, &str_len);
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  it.Seek(Slice(str, str_len));
+  return check_error(M, it.status()), self;
+}
+
+mrb_value iterator_seek_to_first(mrb_state *M, mrb_value self) {
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  it.SeekToFirst();
+  return check_error(M, it.status()), self;
+}
+
+mrb_value iterator_seek_to_last(mrb_state *M, mrb_value self) {
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  it.SeekToLast();
+  return check_error(M, it.status()), self;
+}
+
+mrb_value iterator_next(mrb_state *M, mrb_value self) {
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  it.Next();
+  return check_error(M, it.status()), self;
+}
+
+mrb_value iterator_prev(mrb_state *M, mrb_value self) {
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  it.Prev();
+  return check_error(M, it.status()), self;
+}
+
+mrb_value iterator_key(mrb_state *M, mrb_value self) {
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  Slice const ret = it.key();
+  return check_error(M, it.status()), mrb_str_new(M, ret.data(), ret.size());
+}
+
+mrb_value iterator_value(mrb_state *M, mrb_value self) {
+  Iterator& it = get_ref<Iterator>(M, self, iterator_type);
+  Slice const ret = it.value();
+  return check_error(M, it.status()), mrb_str_new(M, ret.data(), ret.size());
 }
 
 mrb_value snapshot_init(mrb_state *M, mrb_value self) {
@@ -527,6 +646,8 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   mrb_define_method(M, db, "approximate_sizes", db_approximate_sizes, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_method(M, db, "compact_range", db_compact_range, MRB_ARGS_REQ(2));
   mrb_define_method(M, db, "snapshot", db_snapshot, MRB_ARGS_NONE());
+  mrb_define_method(M, db, "iterator", db_iterator, MRB_ARGS_OPT(1));
+  mrb_define_method(M, db, "iterate", db_iterate, MRB_ARGS_OPT(1) | MRB_ARGS_BLOCK());
 
   mrb_define_class_method(M, db, "destroy", db_destroy, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
   mrb_define_class_method(M, db, "repair", db_repair, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
@@ -551,6 +672,19 @@ extern "C" void mrb_mruby_leveldb_gem_init(mrb_state *M) {
   MRB_SET_INSTANCE_TT(snapshot, MRB_TT_DATA);
   mrb_define_method(M, snapshot, "initialize", snapshot_init, MRB_ARGS_REQ(1));
   mrb_define_method(M, snapshot, "release", snapshot_release, MRB_ARGS_REQ(1));
+
+  RClass *iterator = mrb_define_class_under(M, db, "Iterator", M->object_class);
+  MRB_SET_INSTANCE_TT(iterator, MRB_TT_DATA);
+  mrb_define_method(M, iterator, "initialize", iterator_init, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+  mrb_define_method(M, iterator, "delete", iterator_delete, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "valid?", iterator_valid_p, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "seek", iterator_seek, MRB_ARGS_REQ(1));
+  mrb_define_method(M, iterator, "seek_to_first", iterator_seek_to_first, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "seek_to_last", iterator_seek_to_last, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "next", iterator_next, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "prev", iterator_prev, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "key", iterator_key, MRB_ARGS_NONE());
+  mrb_define_method(M, iterator, "value", iterator_value, MRB_ARGS_NONE());
 }
 
 extern "C" void mrb_mruby_leveldb_gem_final(mrb_state*) {}

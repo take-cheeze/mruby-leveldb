@@ -80,6 +80,22 @@ assert_leveldb 'LevelDB#snapshot' do |db|
   assert_equal 'test', db.get('key', :snapshot => s)
 end
 
+assert_leveldb 'LevelDB#iterator' do |db|
+  db.put 'test', 'test'
+  i = db.iterator
+  i.seek_to_first
+  assert_true i.key.kind_of? String
+  assert_true i.value.kind_of? String
+end
+
+assert_leveldb 'LevelDB#iterate' do |db|
+  db.put 'test', 'test'
+  db.iterate do |k, v|
+    assert_true k.kind_of? String
+    assert_true v.kind_of? String
+  end
+end
+
 assert_leveldb 'LevelDB::Snapshot' do |db|
   db.put 'key', 'test'
   s = LevelDB::Snapshot.new db
