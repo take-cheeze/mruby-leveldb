@@ -3,6 +3,10 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
   spec.license = 'BSD3'
   spec.version = version = '1.15.0'
 
+  spec.linker.libraries << 'leveldb'
+
+  next if build.cc.search_header_path 'leveldb/db.h'
+
   require 'open-uri'
   require 'open3'
 
@@ -54,5 +58,4 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
 
   spec.cxx.include_paths << "#{leveldb_dir}/include"
   spec.linker.library_paths << File.dirname(leveldb_lib)
-  spec.linker.libraries << 'leveldb'
 end
