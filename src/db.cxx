@@ -92,7 +92,7 @@ void parse_opt(mrb_state *M, mrb_value const& self, Options& opt, mrb_value cons
     opt.block_restart_interval = mrb_fixnum(block_restart_interval);
   }
 
-  mrb_value const compression = mrb_hash_get(M, val, symbol_value_lit(M, "compression"));
+  mrb_value compression = mrb_hash_get(M, val, symbol_value_lit(M, "compression"));
   if (not mrb_nil_p(compression)) {
     mrb_check_type(M, block_restart_interval, MRB_TT_SYMBOL);
     if (mrb_symbol(compression) == mrb_intern_lit(M, "no") or
@@ -211,7 +211,7 @@ mrb_data_type const leveldb_type = { "LevelDB", db_free };
 
 mrb_value db_init(mrb_state *M, mrb_value self) {
   mrb_value opt_val = mrb_nil_value();
-  char *str; int str_len;
+  char *str; mrb_int str_len;
 
   mrb_get_args(M, "s|H", &str, &str_len, &opt_val);
 
@@ -241,7 +241,7 @@ mrb_value db_put(mrb_state *M, mrb_value self)
 {
   mrb_value opt_val = mrb_nil_value();
   WriteOptions opt;
-  char *key, *val; int key_len, val_len;
+  char *key, *val; mrb_int key_len, val_len;
 
   mrb_get_args(M, "ss|H", &key, &key_len, &val, &val_len, &opt_val);
 
@@ -253,7 +253,7 @@ mrb_value db_put(mrb_state *M, mrb_value self)
 mrb_value db_get(mrb_state *M, mrb_value self) {
   mrb_value opt_val = mrb_nil_value();
   ReadOptions opt;
-  char *key; int key_len;
+  char *key; mrb_int key_len;
 
   mrb_get_args(M, "s|H", &key, &key_len, &opt_val);
 
@@ -271,7 +271,7 @@ mrb_value db_get(mrb_state *M, mrb_value self) {
 mrb_value db_delete(mrb_state *M, mrb_value self) {
   mrb_value opt_val = mrb_nil_value();
   WriteOptions opt;
-  char *key; int key_len;
+  char *key; mrb_int key_len;
 
   mrb_get_args(M, "s|H", &key, &key_len, &opt_val);
 
@@ -281,7 +281,7 @@ mrb_value db_delete(mrb_state *M, mrb_value self) {
 }
 
 mrb_value db_property(mrb_state *M, mrb_value self) {
-  char *key; int key_len;
+  char *key; mrb_int key_len;
   mrb_get_args(M, "s", &key, &key_len);
 
   std::string str;
@@ -318,7 +318,7 @@ mrb_value db_approximate_sizes(mrb_state *M, mrb_value self) {
 }
 
 mrb_value db_compact_range(mrb_state *M, mrb_value self) {
-  char *begin, *end; int begin_len, end_len;
+  char *begin, *end; mrb_int begin_len, end_len;
   int const argc = mrb_get_args(M, "|ss", &begin, &begin_len, &end, &end_len);
   switch(argc) {
     case 2: {
@@ -392,7 +392,7 @@ mrb_value db_iterator(mrb_state *M, mrb_value self) {
 
 mrb_value iterator_init(mrb_state *M, mrb_value self) {
   mrb_value db, opt_val = mrb_nil_value();
-  mrb_get_args(M, "o|o", &opt_val);
+  mrb_get_args(M, "o|o", &db, &opt_val);
 
   DBRef& ref = get_ref<DBRef>(M, db, iterator_type);
   ref.clear_free_handles();
@@ -417,7 +417,7 @@ mrb_value iterator_valid_p(mrb_state *M, mrb_value self) {
 }
 
 mrb_value iterator_seek(mrb_state *M, mrb_value self) {
-  char *str; int str_len;
+  char *str; mrb_int str_len;
   mrb_get_args(M, "s", &str, &str_len);
   Iterator& it = get_ref<Iterator>(M, self, iterator_type);
   it.Seek(Slice(str, str_len));
@@ -485,7 +485,7 @@ mrb_value snapshot_release(mrb_state *M, mrb_value self) {
 mrb_value db_destroy(mrb_state *M, mrb_value self) {
   mrb_value opt_val = mrb_nil_value();
   Options opt;
-  char *fname; int fname_len;
+  char *fname; mrb_int fname_len;
 
   mrb_get_args(M, "s|H", &fname, &fname_len, &opt_val);
   parse_opt(M, mrb_nil_value(), opt, opt_val);
@@ -496,7 +496,7 @@ mrb_value db_destroy(mrb_state *M, mrb_value self) {
 mrb_value db_repair(mrb_state *M, mrb_value self) {
   mrb_value opt_val = mrb_nil_value();
   Options opt;
-  char *fname; int fname_len;
+  char *fname; mrb_int fname_len;
 
   mrb_get_args(M, "s|H", &fname, &fname_len, &opt_val);
   parse_opt(M, mrb_nil_value(), opt, opt_val);
@@ -529,14 +529,14 @@ mrb_value batch_init(mrb_state *M, mrb_value self) {
 }
 
 mrb_value batch_put(mrb_state *M, mrb_value self) {
-  char *key, *val; int key_len, val_len;
+  char *key, *val; mrb_int key_len, val_len;
   mrb_get_args(M, "ss", &key, &key_len, &val, &val_len);
   return get_ref<WriteBatch>(M, self, write_batch_type)
       .Put(Slice(key, key_len), Slice(val, val_len)), self;
 }
 
 mrb_value batch_delete(mrb_state *M, mrb_value self) {
-  char *key; int key_len;
+  char *key; mrb_int key_len;
   mrb_get_args(M, "s", &key, &key_len);
   return get_ref<WriteBatch>(M, self, write_batch_type).Delete(Slice(key, key_len)), self;
 }
@@ -603,7 +603,7 @@ mrb_value batch_iterate(mrb_state *M, mrb_value self) {
 }
 
 mrb_value logger_init(mrb_state *M, mrb_value self) {
-  char *fname; int fname_len;
+  char *fname; mrb_int fname_len;
   mrb_get_args(M, "s", &fname, &fname_len);
 
   Logger *logger;
