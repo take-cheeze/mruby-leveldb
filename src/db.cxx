@@ -183,10 +183,10 @@ struct DBRef {
     mrb_int new_idx = 0;
     for (mrb_int i = 0; i < RARRAY_LEN(handles); ++i) {
       if (DATA_PTR(RARRAY_PTR(handles)[i])) {
-        RARRAY_PTR(handles)[new_idx++] = RARRAY_PTR(handles)[i];
+        mrb_ary_set(M, handles, new_idx++, RARRAY_PTR(handles)[i]);
       }
     }
-    RARRAY_LEN(handles) = new_idx;
+    mrb_ary_resize(M, handles, new_idx);
   }
 
   void add_handle(mrb_value const& v) {
