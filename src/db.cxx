@@ -40,8 +40,7 @@ T& get_ref(mrb_state *M, mrb_value const& v, mrb_data_type const& t) {
 }
 
 void logger_free(mrb_state *M, void *p) {
-  static_cast<Logger*>(p)->~Logger();
-  mrb_free(M, p);
+  delete static_cast<Logger*>(p);
 }
 mrb_data_type const logger_type = { "logger", logger_free };
 
