@@ -1,9 +1,9 @@
 MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
   spec.author = 'Takeshi Watanabe'
   spec.license = 'BSD3'
-  spec.version = version = '1.15.0'
+  spec.version = version = '1.20'
 
-  spec.linker.libraries << 'leveldb'
+  spec.linker.libraries << 'leveldb' << 'pthread'
 
   next if build.cc.search_header_path 'leveldb/db.h'
 
@@ -11,7 +11,7 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
   require 'open3'
 
   leveldb_dir = "#{build_dir}/leveldb-#{version}"
-  leveldb_lib = libfile "#{leveldb_dir}/libleveldb"
+  leveldb_lib = libfile "#{leveldb_dir}/out-static/libleveldb"
   header = "#{leveldb_dir}/include/leveldb/db.h"
 
   task :clean do
@@ -24,7 +24,7 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
 
     begin
       Dir.chdir build_dir do
-        open "https://leveldb.googlecode.com/files/leveldb-#{version}.tar.gz" do |ar|
+        open "https://github.com/google/leveldb/archive/v#{version}.tar.gz" do |ar|
           f = File.open "leveldb-#{version}.tar.gz", 'wb'
           f.write ar.read
           f.close
@@ -47,7 +47,7 @@ MRuby::Gem::Specification.new('mruby-leveldb') do |spec|
         'LD' => spec.build.linker.command,
         'AR' => spec.build.archiver.command }
       _pp 'Building', "leveldb-#{version}"
-      Open3.popen2e(e, "make libleveldb.a") do |stdin, stdout, thread|
+      Open3.popen2e(e, "make out-static/libleveldb.a") do |stdin, stdout, thread|
         print stdout.read
         fail "leveldb-#{version} build failed" if thread.value != 0
       end
